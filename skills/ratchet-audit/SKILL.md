@@ -43,14 +43,41 @@ Create the `ratchet/` directory (respect an existing one: **append/update, never
 
 **`ratchet/AUDIT.md`** — the context: what the project is, architecture, hidden assumptions, what's strong and must be preserved, what's fragile, what remains unclear (say exactly what you couldn't verify — never bluff).
 
-**`ratchet/BACKLOG.md`** — strictly `ratchet:v1` (see `docs/backlog-format.md` in the ratchet repo, or mirror `examples/BACKLOG.example.md`):
+**`ratchet/BACKLOG.md`** — strictly `ratchet:v1`. The skeleton you must emit (full spec: `docs/backlog-format.md` in the ratchet repo, github.com/afrizzal/ratchet):
+
+```markdown
+# BACKLOG — <project or scope name>
+<!-- ratchet:v1 -->
+
+## Global checks
+- `<verify command, deterministic form>`
+
+## Items
+
+### SEC-01 — <title> [P0]
+- Tags: —                  ← only [RISKY] [OPS] [USER-DECISION] [BASELINE], or —
+- Depends: —
+- Evidence: path:line — <verified observation>
+- Spec: <minimal change, one commit>
+- Acceptance:
+  - [ ] `<runnable command>` <expected result>
+
+## Ledger
+| ID | Status | Attempts | Commit | Note |
+|---|---|---|---|---|
+| SEC-01 | todo | 0 | — | — |
+
+## Journal
+```
+
+Field rules:
 - `## Global checks` = the project's real verify commands captured in Phase 1.
 - Items sized to **one commit each** — split anything bigger.
 - ID prefixes by category (`SEC-`, `PERF-`, `TEST-`, `DX-`, `DOC-`...), ordered by priority.
 - Evidence = the verified `file:line — observation`.
 - Spec = the minimal change, written so a *smaller model* can execute it without creativity.
 - Acceptance = runnable commands + observable behaviors. If you can't write a checkable criterion, the item isn't ready — move it to AUDIT.md's "needs definition" list instead.
-- Tag honestly, using **only** the canonical gate vocabulary in the `Tags:` field: `[RISKY]` (migration/destructive/irreversible/wide blast radius), `[OPS]` (needs credentials/infra), `[USER-DECISION]` (product/policy judgment), `[BASELINE]` (fixes a red baseline). **Normalize** — subagents return free-form tags (`auth`, `idor`, `perf`); those are *descriptions*, not gates. Map each to a bracket tag or drop it. A finding tagged `privilege-escalation` but written into the file without `[RISKY]` will be executed by the loop as if it were safe — this is the single most dangerous authoring mistake. When a finding touches auth, tenant boundaries, payments, migrations, secrets, deletion, or GL/money **and** is HIGH/P0, gate it even if it is locally testable — a cheap executor implementing it wrong corrupts data that tests may not catch. If you have not seen the acceptance criteria pass in a real run, prefer the gate.
+- Tag honestly, using **only** the canonical gate vocabulary in the `Tags:` field: `[RISKY]` (migration/destructive/irreversible/wide blast radius), `[OPS]` (needs credentials/infra), `[USER-DECISION]` (product/policy judgment), `[BASELINE]` (fixes a red baseline). **Normalize** — subagents return free-form tags (`auth`, `idor`, `perf`); those are *descriptions*, not gates. Map each to a bracket tag or drop it. A finding tagged `privilege-escalation` but written into the file without `[RISKY]` reads as far safer than it is — this is the single most dangerous authoring mistake. When a finding touches auth, tenant boundaries, payments, migrations, secrets, deletion, or GL/money **and** is HIGH/P0, prefer the gate even if it is locally testable — a cheap executor implementing it wrong corrupts data that tests may not catch. (Ungated sensitive items are not defenseless — the loop's high-stakes gate still demands explicit `--only` routing plus `--verify fresh` before executing them — but the bracket tag is what forces a human review first, and if you have not seen the acceptance criteria pass in a real run, the tag is the right call.)
 - Full Ledger (all `todo`, attempts 0) + empty Journal.
 
 ## Phase 5 — Report

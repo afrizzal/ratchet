@@ -11,11 +11,11 @@ Thanks for turning the crank with us. Ground rules — short on purpose:
 ## What needs an issue first
 
 - **Changes to the backlog format** (`docs/backlog-format.md`). The format is the public contract — breaking it breaks every port. Propose in an issue, tag it `format-v2`.
-- New skills. Ratchet stays a four-skill story (audit → backlog → loop → ship); new capabilities should usually extend an existing skill.
+- New skills. Ratchet stays a five-skill story (audit → backlog → recommend → loop → ship); new capabilities should usually extend an existing skill.
 
 ## House style
 
-- Skills are **single-file** (`skills/<name>/SKILL.md`), English, imperative voice, no fluff.
+- Skills are **one folder** — `skills/<name>/SKILL.md`, plus at most one or two reference files the skill loads at runtime (e.g. `ratchet-loop/executor-rules.md`). English, imperative voice, no fluff. Anything a skill needs at runtime must live *inside its folder* — installed skills can't see `docs/`.
 - Every rule in a skill must earn its place: it prevents a specific, nameable failure.
 - Examples over adjectives.
 

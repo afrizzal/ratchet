@@ -52,27 +52,49 @@ Three nested loops:
 
 ## 60-second quickstart
 
-```bash
-# 1. Install (user-level — available in every project)
-git clone https://github.com/afrizzal/ratchet
-cp -r ratchet/skills/* ~/.claude/skills/
+Install as a plugin (one command, updates included):
+
+```
+/plugin marketplace add afrizzal/ratchet
+/plugin install ratchet@ratchet
 ```
 
-```powershell
-# Windows
-git clone https://github.com/afrizzal/ratchet
-Copy-Item -Recurse ratchet/skills/* "$env:USERPROFILE\.claude\skills\"
-```
+> Plugin installs namespace the commands: `/ratchet:ratchet-audit`, `/ratchet:ratchet-loop`, …
+> Prefer bare names? Copy the skills instead (they then work as `/ratchet-audit` etc.):
+>
+> ```bash
+> git clone https://github.com/afrizzal/ratchet
+> cp -r ratchet/skills/* ~/.claude/skills/            # macOS/Linux
+> Copy-Item -Recurse ratchet/skills/* "$env:USERPROFILE\.claude\skills\"   # Windows
+> ```
 
 Then, inside any project in Claude Code:
 
 ```
-/ratchet-audit                 # deep multi-agent audit → ratchet/BACKLOG.md
+/ratchet-audit                        # deep multi-agent audit → ratchet/BACKLOG.md
 # ...review & edit the backlog like code — delete items, adjust specs, add tags...
-/ratchet-recommend             # routed plan → ratchet/NEXT.md (what next + who does it)
-/ratchet-loop                  # execute it: one verified commit per item
-/ratchet-ship                  # preflight → push → watch CI → smoke checklist
+/ratchet-recommend                    # routed plan → ratchet/NEXT.md (what next + who does it)
+/ratchet-loop --only SEC-01 --verify fresh   # paste the wave commands NEXT.md prescribes
+/ratchet-ship                         # preflight → push → watch CI → smoke checklist
 ```
+
+(Installed as a plugin? Prefix each command: `/ratchet:ratchet-audit`, `/ratchet:ratchet-loop`, …)
+
+NEXT.md is *your* plan — the loop reads it and refuses to silently downgrade its verification
+routing, but you issue the wave commands. Bare `/ratchet-loop` is the no-routing shortcut:
+file-order execution of everything eligible. Run the loop on a work branch — the loop offers to
+create one, and `/ratchet-ship` opens the PR.
+
+### Running the plan with a cheaper model
+
+This is the core motion: the expensive model audits and routes; a cheap model executes.
+
+1. `/ratchet-audit` and `/ratchet-recommend` with your strongest model (Opus/Fable).
+2. Switch: `/model sonnet` in the same session, or start a fresh one with `claude --model sonnet`.
+3. Paste each wave's command from `ratchet/NEXT.md`. The loop makes the handoff safe by
+   construction: it loads its own `executor-rules.md` (12 do-this-exactly rules for smaller
+   models), honors NEXT.md's verify assignments, and hard-parks anything high-stakes that wasn't
+   explicitly routed to it.
 
 Don't want a full audit? Build a backlog from anything:
 
@@ -116,21 +138,24 @@ The format is agent-agnostic on purpose: these skills are the Claude Code implem
 | [`ratchet-audit`](skills/ratchet-audit/SKILL.md) | Fans out parallel subagents across your codebase (data layer, API/auth, business logic, tests/CI, frontend), verifies every finding down to file:line, and emits `ratchet/AUDIT.md` + a prioritized, acceptance-gated `ratchet/BACKLOG.md`. |
 | [`ratchet-backlog`](skills/ratchet-backlog/SKILL.md) | Creates, validates, and grooms backlog files — from audits, TODO comments, GitHub issues, PRDs, or plain conversation. Enforces the invariant: **no acceptance criteria, no item.** |
 | [`ratchet-recommend`](skills/ratchet-recommend/SKILL.md) | The navigator. Read-only. Turns the backlog + ledger into a routed plan (`ratchet/NEXT.md`): what to do next, who does each item (autonomous cheap model / supervised / senior / human decision), in what order, with what verification. This is the layer that lets a cheaper model match a senior one — it inherits the routing instead of guessing it. |
-| [`ratchet-loop`](skills/ratchet-loop/SKILL.md) ⭐ | The executor. Picks the next eligible item, implements exactly its spec, runs acceptance until green (bounded), commits atomically, updates the ledger, repeats. Stops cleanly; resumes for free. |
+| [`ratchet-loop`](skills/ratchet-loop/SKILL.md) ⭐ | The executor. Picks the next eligible item, implements exactly its spec, runs acceptance until green (bounded), commits atomically, updates the ledger, repeats. Stops cleanly; resumes for free. Ships with [`executor-rules.md`](skills/ratchet-loop/executor-rules.md) — 12 binding rules that make the loop safe for smaller models. |
 | [`ratchet-ship`](skills/ratchet-ship/SKILL.md) | Release runbook: full preflight, diff & secret scan, push, watch CI to green, smoke checklist, rollback notes. |
 
 ## Field notes
 
-Ratchet's workflow was extracted from a real engagement, not invented for this README. In its first field run on a production multi-tenant SaaS (253 API routes, 114 database models, ~140k LOC), the audit surfaced **two HIGH-severity authorization flaws** that had survived months of feature work — one cross-tenant IDOR, one systemic permission-check gap — plus a prioritized backlog of 18 items with per-item acceptance criteria. The backlog was then executed item-by-item by a smaller model, every fix landing as its own verified commit, with human-gated items correctly parked for review.
+Ratchet's workflow was extracted from a real engagement, not invented for this README. In its first field run on a production multi-tenant SaaS (40 tRPC routers, 76 database models, ~140k LOC), the audit surfaced **two HIGH-severity authorization flaws** that had survived months of feature work — one cross-tenant IDOR, one systemic permission-check gap — plus a prioritized backlog of 18 items with per-item acceptance criteria. The backlog was then executed item-by-item by a smaller model, every fix landing as its own verified commit, with human-gated items correctly parked for review.
 
 The lesson that became Ratchet: **the handoff artifact matters more than the model.** A sharp backlog with checkable acceptance criteria lets a cheaper model execute safely what an expensive model discovered.
 
 ## Safety model
 
-- The loop **requires a clean working tree** to start, and reverts an item's changes completely if it can't get to green — a failed item never contaminates the next one.
-- `[USER-DECISION]` / `[OPS]` / `[RISKY]` tags are hard gates. The loop reports; it does not improvise.
+- The loop **requires a clean working tree** to start (its own state files excepted — those it recovers and commits), and reverts an item's changes completely if it can't get to green — a failed item never contaminates the next one.
+- `[USER-DECISION]` / `[OPS]` / `[RISKY]` tags are hard gates. The loop reports; it does not improvise. Releasing a parked item is a documented human procedure ([Human transitions](docs/backlog-format.md)): journal the decision, clear the tag, status back to `todo`.
+- **High-stakes gate, mechanical:** even *untagged* items touching auth, tenant boundaries, money/GL, migrations, secrets, deletion, or session handling only execute when a human (or the NEXT.md routing) explicitly listed them via `--only` **and** `--verify fresh` is on. No model self-assessment — the flags decide.
 - Acceptance criteria are read-only to the loop. If a criterion turns out to be wrong, the item goes to `needs-human` — the goalposts don't move.
 - Optional clean-room verification (`--verify fresh`): a separate subagent that never saw the implementation re-runs the acceptance criteria independently — the implementer doesn't grade its own homework.
+- Crash-safe by design: `in-progress` marks and the ledger live in a git-tracked file; a resuming run recognizes its own debris, commits it as `ratchet: recover state`, resets orphaned items to `todo`, and continues.
+- The loop won't quietly commit to a push-to-deploy default branch — it proposes a `ratchet/<scope>` work branch first; `/ratchet-ship` opens the PR.
 - No force-pushes, no `--no-verify`, no amending history. Ever.
 - Two consecutive blocked items stop the run — that pattern usually means something systemic, and a human should look.
 
@@ -152,7 +177,7 @@ The lesson that became Ratchet: **the handoff artifact matters more than the mod
 
 ## Roadmap
 
-- [ ] Claude Code plugin packaging (one-command install)
+- [x] Claude Code plugin packaging (one-command install)
 - [ ] GitHub Action: scheduled meta-loop (`audit → open PR with backlog`)
 - [ ] Backlog format v2: parallel lanes for multi-agent execution
 - [ ] Ports: Cursor rules, OpenAI Codex prompt pack
