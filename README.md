@@ -69,6 +69,7 @@ Then, inside any project in Claude Code:
 ```
 /ratchet-audit                 # deep multi-agent audit → ratchet/BACKLOG.md
 # ...review & edit the backlog like code — delete items, adjust specs, add tags...
+/ratchet-recommend             # routed plan → ratchet/NEXT.md (what next + who does it)
 /ratchet-loop                  # execute it: one verified commit per item
 /ratchet-ship                  # preflight → push → watch CI → smoke checklist
 ```
@@ -114,6 +115,7 @@ The format is agent-agnostic on purpose: these skills are the Claude Code implem
 |---|---|
 | [`ratchet-audit`](skills/ratchet-audit/SKILL.md) | Fans out parallel subagents across your codebase (data layer, API/auth, business logic, tests/CI, frontend), verifies every finding down to file:line, and emits `ratchet/AUDIT.md` + a prioritized, acceptance-gated `ratchet/BACKLOG.md`. |
 | [`ratchet-backlog`](skills/ratchet-backlog/SKILL.md) | Creates, validates, and grooms backlog files — from audits, TODO comments, GitHub issues, PRDs, or plain conversation. Enforces the invariant: **no acceptance criteria, no item.** |
+| [`ratchet-recommend`](skills/ratchet-recommend/SKILL.md) | The navigator. Read-only. Turns the backlog + ledger into a routed plan (`ratchet/NEXT.md`): what to do next, who does each item (autonomous cheap model / supervised / senior / human decision), in what order, with what verification. This is the layer that lets a cheaper model match a senior one — it inherits the routing instead of guessing it. |
 | [`ratchet-loop`](skills/ratchet-loop/SKILL.md) ⭐ | The executor. Picks the next eligible item, implements exactly its spec, runs acceptance until green (bounded), commits atomically, updates the ledger, repeats. Stops cleanly; resumes for free. |
 | [`ratchet-ship`](skills/ratchet-ship/SKILL.md) | Release runbook: full preflight, diff & secret scan, push, watch CI to green, smoke checklist, rollback notes. |
 

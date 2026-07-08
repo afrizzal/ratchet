@@ -71,6 +71,7 @@ An item is eligible when ALL hold: Ledger status `todo` · no human-gate tag (`[
 - Journal highlights: discoveries, suggested new items (you never add items yourself — suggest them).
 - Parked items needing humans, grouped by tag.
 - Exact resume command.
+- Pointer: suggest `/ratchet-recommend` to regenerate `ratchet/NEXT.md` — the routed plan for what to do next and who (autonomous cheap model / supervised / senior / human) should do each item now that the ledger has moved.
 
 ## Failure modes you must not exhibit
 

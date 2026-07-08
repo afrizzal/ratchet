@@ -55,7 +55,7 @@ Create the `ratchet/` directory (respect an existing one: **append/update, never
 
 ## Phase 5 — Report
 
-Summarize to the user: top findings by severity (plain language, with the one-sentence exploit/failure story each), what's strong, item count by priority, and the handoff line: *review/edit `ratchet/BACKLOG.md`, then run `/ratchet-loop`*.
+Summarize to the user: top findings by severity (plain language, with the one-sentence exploit/failure story each), what's strong, item count by priority, and the handoff line: *review/edit `ratchet/BACKLOG.md`, then run `/ratchet-recommend` for a routed plan (who does what, in what order), or `/ratchet-loop` to start executing*.
 
 ## Rules
 
