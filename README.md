@@ -128,6 +128,7 @@ The lesson that became Ratchet: **the handoff artifact matters more than the mod
 - The loop **requires a clean working tree** to start, and reverts an item's changes completely if it can't get to green — a failed item never contaminates the next one.
 - `[USER-DECISION]` / `[OPS]` / `[RISKY]` tags are hard gates. The loop reports; it does not improvise.
 - Acceptance criteria are read-only to the loop. If a criterion turns out to be wrong, the item goes to `needs-human` — the goalposts don't move.
+- Optional clean-room verification (`--verify fresh`): a separate subagent that never saw the implementation re-runs the acceptance criteria independently — the implementer doesn't grade its own homework.
 - No force-pushes, no `--no-verify`, no amending history. Ever.
 - Two consecutive blocked items stop the run — that pattern usually means something systemic, and a human should look.
 
@@ -140,6 +141,12 @@ The lesson that became Ratchet: **the handoff artifact matters more than the mod
 **Does it work unattended?** Yes — that's the point of file-based state. Pair `/ratchet-loop` with Claude Code's `/loop`, a cron job, or a CI workflow for standing automation. Start attended until you trust your acceptance criteria.
 
 **My project isn't Node/TypeScript.** Ratchet is stack-agnostic. The audit detects your toolchain and writes acceptance commands in it; the loop just runs whatever the criteria say.
+
+## Prior art & positioning
+
+- **Skill libraries** — [`anthropics/skills`](https://github.com/anthropics/skills), [`obra/superpowers`](https://github.com/obra/superpowers), [`alirezarezvani/claude-skills`](https://github.com/alirezarezvani/claude-skills) (355 skills) — give agents *expertise*: personas, domain knowledge, tool recipes. Ratchet gives agents *a contract*. They compose: load whatever expertise you like; Ratchet governs how the work lands.
+- **Loop machinery** — Anthropic's research on long-running agents, and `agent-harness` (in the repo above): a manifest → plan → loop-controller state machine in Python + JSON. Ratchet takes the same discipline — bounded retries, escalation, *never trust the agent's own claim of success* (that's where `--verify fresh` comes from) — and bets on the opposite implementation: the smallest possible contract, one markdown file, zero runtime scripts, reviewable in a PR.
+- **Loop catalogs** — Forward-Future's `loop-library` documents *which* loops practitioners run. Ratchet is *how* one loop executes safely.
 
 ## Roadmap
 

@@ -34,7 +34,7 @@ Prompts must be self-contained (agents don't see your conversation): include the
 
 ## Phase 3 — Verify before you write
 
-For every candidate finding: open the cited file yourself (or via a verification agent at `--depth deep`) and confirm the evidence holds **today**. Drop or downgrade anything you cannot confirm. Severity honestly: HIGH = exploitable/corrupting/money-losing now · MED = will bite under a plausible condition · LOW = debt and drift. Never inflate.
+For every candidate finding: open the cited file yourself and confirm the evidence holds **today**. At `--depth deep`, additionally spawn independent verification agents prompted to **refute** each HIGH/MED finding (each verifier gets only the claim + repo path, not the finder's reasoning); a finding survives only if the refuter fails. Drop or downgrade anything you cannot confirm — the loop downstream will trust your evidence literally, so unverified findings poison everything after them. Severity honestly: HIGH = exploitable/corrupting/money-losing now · MED = will bite under a plausible condition · LOW = debt and drift. Never inflate.
 
 ## Phase 4 — Write the two artifacts
 

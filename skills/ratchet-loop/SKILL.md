@@ -12,12 +12,13 @@ The backlog file is the single source of state. You are stateless; treat every r
 ## Invocation
 
 ```
-/ratchet-loop [path] [--max-items N] [--only ID[,ID...]] [--dry-run]
+/ratchet-loop [path] [--max-items N] [--only ID[,ID...]] [--verify inline|fresh] [--dry-run]
 ```
 
 - `path` — backlog file. Default: `ratchet/BACKLOG.md`, else `BACKLOG.md` at repo root. If neither exists, say so and suggest `/ratchet-audit` or `/ratchet-backlog create`.
 - `--max-items N` — stop after N items reach a terminal state this run.
 - `--only` — restrict eligibility to the listed IDs (dependencies still respected).
+- `--verify` — verification mode, see "Verification modes" below. Default `inline`.
 - `--dry-run` — do phases 0–1 only: validate, report the execution plan, touch nothing.
 
 ## Phase 0 — Preflight (never skip, never reorder)
@@ -50,6 +51,11 @@ An item is eligible when ALL hold: Ledger status `todo` · no human-gate tag (`[
 6. **Attempts exhausted → block cleanly.** Revert everything this item touched: `git checkout -- .` then remove files the item created (you know them; you created them — remove explicitly, or `git clean -fd` which is safe *only because* Phase 0 guaranteed a clean start and every prior item committed). Confirm `git status` is clean. Ledger `blocked` + attempts count; Journal: what failed, best hypothesis, what a human should look at.
 7. **Green → the ratchet clicks.** One atomic commit containing (a) the item's code changes and (b) the backlog file's Ledger row update (`done`, attempts, sha placeholder → fill after commit with the short sha via a tiny amend-free follow-up edit? No —) — do it in this order: update the Ledger row to `done` with attempts and note, stage code + backlog together, commit once, then write the short sha into the row and include that edit in the NEXT item's commit (or a final `ratchet: sync ledger` commit at run end). Commit message: follow the detected repo convention; fallback `ratchet(<ID>): <title>`. Never `--no-verify`; if a hook fails, that's a red verify — go to step 5.
 
+## Verification modes
+
+- **`inline`** (default) — you run the acceptance criteria and global checks yourself, and you may only mark them on observation, never on inference.
+- **`fresh`** — after your own checks pass, spawn a **clean-room verification subagent** that receives ONLY: the item's text, its acceptance criteria, the global checks, and the repo path — *not* your implementation reasoning or diff narrative. It independently re-runs every criterion and reports pass/fail per criterion. Any disagreement counts as red (back to the fix loop; the subagent's failing evidence goes in the Journal). The point: after several red attempts, an implementer starts seeing green that isn't there — a verifier with no stake in the outcome doesn't. Costs more; use it for high-stakes items (`[P0]`, security, data) and for unattended runs.
+
 ## Stop conditions — the outer loop ends when
 
 - No eligible items remain (report: **backlog dry**).
@@ -72,3 +78,4 @@ An item is eligible when ALL hold: Ledger status `todo` · no human-gate tag (`[
 - **Silent scope growth** — the most common way loops turn a codebase to soup.
 - **Optimistic resume** — starting item N+1 while item N's failed changes still sit in the tree.
 - **Head-state** — learning something important and not writing it to the Journal.
+- **Self-grading under pressure** — attempt 3, deadline energy, and suddenly the flaky check "basically passes". It doesn't. That failure mode is exactly what `--verify fresh` exists for.
