@@ -17,7 +17,8 @@ Shipping is the only ratchet click users feel. Your contract: nothing leaves the
 
 1. Read the repo's release reality: CI workflows (`.github/workflows/`, GitLab CI, etc.), deploy docs (README/DEPLOYMENT/CLAUDE.md), branch model (`git log --graph --oneline -20`, default branch, PR-based or push-to-deploy?).
 2. **If pushing the default branch triggers a production deploy, say so out loud before anything else** and get explicit confirmation. Push-to-deploy repos get no casual pushes.
-3. Detect the local verify commands (test/typecheck/lint/build) from the manifest.
+3. Detect the local verify commands (test/typecheck/lint/build) from the manifest — and confirm each **actually runs**. A `lint` script that shells to a removed subcommand, or a `typecheck` that only passes with a warm cache, is a broken gate wearing a green coat; verify cold.
+4. **Confirm the CI gate is enforceable, not just present.** A green pipeline that cannot block a merge is advisory theater. Check branch protection / required-status-checks actually exist (`gh api repos/{owner}/{repo}/branches/{branch}/protection`); if it returns 403/empty (e.g. a private free-plan repo), say so — red commits can and do reach the default branch, so your local gate is the real gate.
 
 ## Phase 2 — Preflight (local, all of it)
 
@@ -25,6 +26,7 @@ Shipping is the only ratchet click users feel. Your contract: nothing leaves the
 2. Review the outgoing diff (`git diff <base>...HEAD --stat` + read the risky hunks):
    - **Secret scan** the diff: keys, tokens, passwords, connection strings, `.env` content. Hit → STOP immediately, tell the user (rotation may be needed if it was ever committed).
    - Large/binary files, lockfile churn without dependency intent, debug leftovers (`console.log`, commented-out blocks, skipped tests).
+   - **Reproducibility of the CI build.** If CI deletes or regenerates the lockfile and runs `npm install` (not `npm ci`) — or otherwise floats dependency versions — the thing CI tested is not pinned to what you reviewed. Flag it; a green run on unpinned deps is a weaker signal than it looks.
 3. Docs sync: if the repo maintains a CHANGELOG / task ledger / ratchet BACKLOG.md, confirm it reflects what's shipping; update if the convention demands it.
 4. Migrations going out? Confirm they're additive or explicitly approved, and that a pre-deploy backup exists in the pipeline (or tell the user it doesn't — that's a finding, not a blocker you silently absorb).
 

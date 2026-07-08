@@ -31,9 +31,12 @@ Also detect the project's real verify commands (test/typecheck/lint from its man
 Lint an existing file against the contract. Check, and report as a PASS/FAIL table with fixes:
 - `ratchet:v1` marker present; all four sections present.
 - IDs match `[A-Z]+-\d+`, unique; every item has Spec + ≥1 Acceptance criterion.
+- **`Tags:` uses only canonical gates** (`[RISKY]`, `[OPS]`, `[USER-DECISION]`, `[BASELINE]`, or `—`). Any free-form tag (`auth`, `idor`, `perf`, bare `BASELINE` without brackets) is a **FAIL** — the loop won't recognize it, so a gated item reads as eligible.
+- **At least one acceptance criterion is loop-runnable** — a backticked command the executor can actually run in this environment. An item whose criteria are *all* manual/human-eye ("visit in a browser", "EXPLAIN shows Index Scan", "gh api returns …") is a FAIL: the loop can never mark it done and will bounce it to `needs-human`. Every item needs one command that returns green.
+- **Global checks are deterministic.** A check like `tsc --noEmit` that depends on a cache or generated types (passes warm, fails cold) is a FAIL — pin it (`--incremental false`, cold form). If the cold baseline is red, there must be a `[BASELINE]` item.
 - Ledger: one row per item, statuses within the legal set (`todo/in-progress/done/blocked/needs-human/skipped`), every `done` row has a commit sha.
 - `Depends:` references exist and are acyclic.
-- Smells (WARN, not FAIL): items that look multi-commit; acceptance criteria that aren't checkable ("works well", "is clean"); human-gate-worthy specs without tags (migrations, deletions, payments, auth changes); stale `in-progress` rows with no matching Journal tail.
+- Smells (WARN, not FAIL): items that look multi-commit; acceptance criteria that aren't checkable ("works well", "is clean"); human-gate-worthy specs without tags (migrations, deletions, payments, auth changes); HIGH/P0 items touching money/GL/auth/tenant that are *ungated* (they may be locally testable but a wrong fix corrupts data — flag for `[RISKY]` + `--verify fresh`); stale `in-progress` rows with no matching Journal tail.
 Fix mechanical problems only with the user's go-ahead; never rewrite Specs silently.
 
 ### `add "<description>"`

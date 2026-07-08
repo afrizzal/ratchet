@@ -20,7 +20,8 @@ Your output is not a report card; it is **work orders**. Every finding must surv
 
 1. Read the manifests and configs: `package.json` / `pyproject.toml` / `go.mod` / `Cargo.toml`, lockfiles, CI workflows, Dockerfiles, env examples, top-level README/CLAUDE.md/CONTRIBUTING.
 2. Determine: stack, entry points, how it's tested (**capture the exact commands** — they become Global checks), how it's deployed, and the domain axes that matter (multi-tenant? auth? payments? background jobs?).
-3. Pick audit dimensions by project shape — typical for a web app: **data layer/schema · API surface/authz · business logic/duplication/fragility · tests/CI/ops · frontend/UX debt**. A CLI or library gets different cuts (public API, error handling, packaging, docs). Don't force irrelevant dimensions.
+3. **Baseline reality check (mandatory).** Run each candidate Global check **cold** — fresh clone semantics: no incremental cache, no dev-server-generated types, the way CI runs it. A check that passes warm but fails cold is a *non-deterministic* check and is worse than useless as a gate (the loop will read a false green). When you find one: (a) pin the Global check to its deterministic form (e.g. `tsc --noEmit --incremental false`, not `tsc --noEmit`), and (b) if the cold run is **red**, that is not a "skip" — it is your **first backlog item**, tagged `[BASELINE]`, because the loop cannot ratchet forward from a red baseline. Never emit a backlog whose own Global checks are red with no `[BASELINE]` item to fix them.
+4. Pick audit dimensions by project shape — typical for a web app: **data layer/schema · API surface/authz · business logic/duplication/fragility · tests/CI/ops · frontend/UX debt**. A CLI or library gets different cuts (public API, error handling, packaging, docs). Don't force irrelevant dimensions.
 
 ## Phase 2 — Fan out (parallel subagents; skip at `--depth quick`)
 
@@ -49,7 +50,7 @@ Create the `ratchet/` directory (respect an existing one: **append/update, never
 - Evidence = the verified `file:line — observation`.
 - Spec = the minimal change, written so a *smaller model* can execute it without creativity.
 - Acceptance = runnable commands + observable behaviors. If you can't write a checkable criterion, the item isn't ready — move it to AUDIT.md's "needs definition" list instead.
-- Tag honestly: migrations/destructive → `[RISKY]`; needs credentials/infra → `[OPS]`; product judgment → `[USER-DECISION]`.
+- Tag honestly, using **only** the canonical gate vocabulary in the `Tags:` field: `[RISKY]` (migration/destructive/irreversible/wide blast radius), `[OPS]` (needs credentials/infra), `[USER-DECISION]` (product/policy judgment), `[BASELINE]` (fixes a red baseline). **Normalize** — subagents return free-form tags (`auth`, `idor`, `perf`); those are *descriptions*, not gates. Map each to a bracket tag or drop it. A finding tagged `privilege-escalation` but written into the file without `[RISKY]` will be executed by the loop as if it were safe — this is the single most dangerous authoring mistake. When a finding touches auth, tenant boundaries, payments, migrations, secrets, deletion, or GL/money **and** is HIGH/P0, gate it even if it is locally testable — a cheap executor implementing it wrong corrupts data that tests may not catch. If you have not seen the acceptance criteria pass in a real run, prefer the gate.
 - Full Ledger (all `todo`, attempts 0) + empty Journal.
 
 ## Phase 5 — Report
@@ -70,3 +71,6 @@ Summarize to the user: top findings by severity (plain language, with the one-se
 - Mega-items ("refactor the auth system") — unshippable in one commit, guaranteed to block.
 - Overwriting a backlog that has Ledger history.
 - Generic advice untethered to this codebase.
+- **Emitting a backlog with a red or non-deterministic baseline and no `[BASELINE]` item** — the loop stops on the first preflight and the whole artifact is dead on arrival.
+- **Free-form tags in the `Tags:` field** — the loop only recognizes the four bracket gates; anything else reads as ungated.
+- **Trusting subagent summaries verbatim.** Finders overclaim (this field-test's currency finding was MED until a verifier proved the harm path didn't exist yet → LOW) and mis-count (a brief said "114 models"; the schema had 76). Open the cited line yourself; at `--depth deep`, the refute pass is what catches inflation.
