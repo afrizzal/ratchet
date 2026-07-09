@@ -28,6 +28,7 @@ That one move buys everything else:
 | **Atomic** | One item = one commit, containing the change **and** its ledger update. Every ratchet click is self-documenting and individually revertable. |
 | **Safe** | Items tagged `[USER-DECISION]`, `[OPS]`, or `[RISKY]` are never executed — the loop parks them as `needs-human` and moves on. |
 | **Reviewable** | The backlog is a file. It goes through PR review like any other code. No tracker, no API, no lock-in. |
+| **Parallel** | [Format v2](#parallel-lanes-format-v2) splits the state into one file per lane, so several agents run the same backlog at once without a merge conflict. |
 
 ## The loop
 
@@ -92,7 +93,7 @@ This is the core motion: the expensive model audits and routes; a cheap model ex
 1. `/ratchet-audit` and `/ratchet-recommend` with your strongest model (Opus/Fable).
 2. Switch: `/model sonnet` in the same session, or start a fresh one with `claude --model sonnet`.
 3. Paste each wave's command from `ratchet/NEXT.md`. The loop makes the handoff safe by
-   construction: it loads its own `executor-rules.md` (12 do-this-exactly rules for smaller
+   construction: it loads its own `executor-rules.md` (13 do-this-exactly rules for smaller
    models), honors NEXT.md's verify assignments, and hard-parks anything high-stakes that wasn't
    explicitly routed to it.
 
@@ -114,7 +115,7 @@ A ratchet backlog is plain markdown with a tiny contract ([full spec](docs/backl
 - Evidence: api/items/[id]/route.ts:16 — GET/PATCH/DELETE filter by group only, not space
 - Spec: add spaceId (from the session helper) to all three where-clauses; use updateMany/deleteMany
 - Acceptance:
-  - [ ] `npx tsc --noEmit` exits 0
+  - [ ] `npx tsc --noEmit --incremental false` exits 0
   - [ ] request against another space's item id returns 404
   - [ ] existing save/delete flow in the UI still works
 
@@ -131,14 +132,82 @@ A ratchet backlog is plain markdown with a tiny contract ([full spec](docs/backl
 
 The format is agent-agnostic on purpose: these skills are the Claude Code implementation, but nothing stops a Cursor rule, a Codex prompt, or a bare script from executing the same file. Ports welcome — see [CONTRIBUTING](CONTRIBUTING.md).
 
+### Parallel lanes (format v2)
+
+One file, one writer — which means one executor at a time. **Format v2** ([spec](docs/backlog-format.md#5-format-v2--parallel-lanes-ratchetv2), [worked example](examples/v2/)) relocates the mutable state so several agents can work the same backlog concurrently:
+
+```
+ratchet/
+  BACKLOG.md        # human-owned: Global checks + Lanes + Items. Executors never write it.
+  lanes/core.md     # default lane — shared paths, dependencies, integration fixes
+  lanes/api.md      # ledger + journal for Lane: api      ← one writer
+  lanes/ui.md       # ledger + journal for Lane: ui       ← one writer
+```
+
+Each item declares a `Lane:`; each lane owns a disjoint slice of the tree and runs in its own worktree on `ratchet/<lane>`. Two executors, two lane files, two source scopes — nothing to merge-conflict over.
+
+```
+/ratchet-loop --lane api --only SEC-02 --verify fresh    # worktree A
+/ratchet-loop --lane ui  --only UI-07  --verify inline   # worktree B, same time
+```
+
+```mermaid
+gitGraph
+    commit id: "recommend → NEXT.md"
+    branch api
+    checkout main
+    branch ui
+    checkout api
+    commit id: "ratchet(api): run open"
+    checkout ui
+    commit id: "ratchet(ui): run open"
+    checkout api
+    commit id: "ratchet(SEC-02): scope by owner"
+    checkout ui
+    commit id: "ratchet(UI-07): empty state"
+    commit id: "ratchet: sync ledger"
+    checkout main
+    merge ui
+    checkout api
+    commit id: "ratchet: sync ledger"
+    checkout main
+    merge api
+    commit id: "npm test @ merge"
+```
+
+(The branches are really named `ratchet/api` and `ratchet/ui`.) Each lane opens with a committed marker, lands each item as one atomic commit — source change **plus** its own ledger row — and closes with `ratchet: sync ledger`. A human merges, then re-runs the Global checks. The [worked example](examples/v2/) is this repo captured mid-wave, with both lanes open at once.
+
+|  | v1 | v2 |
+|---|---|---|
+| **Executors at once** | one | one per lane |
+| **Mutable state** | one `## Ledger` + `## Journal` in `BACKLOG.md` | one file per lane, single writer |
+| **Coordination cost** | none | one merge per lane, plus a barrier for shared paths |
+| **Ledger merge conflicts** | n/a (one writer) | none — no two writers share a file |
+| **Source merge conflicts** | n/a | none *within* the format's rules; the barrier lane exists because scopes alone can't cover shared files |
+| **Semantic conflicts** | n/a | still possible — lanes green apart can be red together, which is why the Global checks re-run at the merge |
+| **When to use** | the default | the backlog is large *and* the work genuinely partitions |
+
+What keeps it honest — every one of these exists because the naive version breaks:
+
+- **Run markers.** A run opens its lane with a committed `run started` journal line and closes it with `run ended`. That is how a resuming agent tells *crash debris* (recover it) from *a live parallel run* (hands off), which a clean-tree check cannot do across worktrees.
+- **The default lane is a barrier.** Anything whose diff escapes every named scope — a new dependency and its lockfile, generated files, a post-merge integration fix — lives in the `(rest)` lane, which runs alone, with every other lane closed and merged. Lane assignment follows the diff, not the theme.
+- **Scope binds the diff, not just the Spec.** Before committing, the executor checks its diff's paths against its lane; a stray path parks the item rather than poisoning a merge.
+- **Reads are global, writes are local.** A lane run reads every lane's ledger and journal — lessons don't respect scope boundaries — and writes exactly one file.
+- **Humans get a write window.** Unparking, adding items, and grooming touch lane files only on the integration branch while that lane is closed. `BACKLOG.md` is frozen while any lane is open, so a Spec can't change under a `done` row that was earned against the old one.
+- **Merging is a human step**, merge-commit or fast-forward only. Squash and rebase-merge rewrite shas and orphan every `Commit:` cell in the ledger. Lanes green apart can be red together, so the Global checks run again at the merge.
+
+- **Stop conditions are per lane.** Two consecutive blocked items stop *that lane's* run; the sibling agent keeps going. A sick lane doesn't halt a healthy wave.
+
+v1 is not deprecated and stays the default: one agent, one file, zero coordination. Reach for v2 when the backlog is big enough that parallelism beats simplicity **and** the work actually partitions — if every item touches `src/core/`, lanes buy you nothing. `/ratchet-backlog migrate` converts in one commit, preserving every ID, row, and journal line ([migration guide](CONTRIBUTING.md#migrating-a-backlog-from-v1-to-v2)); going back is just as cheap.
+
 ## The skills
 
 | Skill | What it does |
 |---|---|
 | [`ratchet-audit`](skills/ratchet-audit/SKILL.md) | Fans out parallel subagents across your codebase (data layer, API/auth, business logic, tests/CI, frontend), verifies every finding down to file:line, and emits `ratchet/AUDIT.md` + a prioritized, acceptance-gated `ratchet/BACKLOG.md`. |
-| [`ratchet-backlog`](skills/ratchet-backlog/SKILL.md) | Creates, validates, and grooms backlog files — from audits, TODO comments, GitHub issues, PRDs, or plain conversation. Enforces the invariant: **no acceptance criteria, no item.** |
+| [`ratchet-backlog`](skills/ratchet-backlog/SKILL.md) | Creates, validates, grooms, and migrates backlog files — from audits, TODO comments, GitHub issues, PRDs, or plain conversation. Enforces the invariant: **no acceptance criteria, no item.** Owns lane files in v2 (creation, rows, unparking). |
 | [`ratchet-recommend`](skills/ratchet-recommend/SKILL.md) | The navigator. Read-only. Turns the backlog + ledger into a routed plan (`ratchet/NEXT.md`): what to do next, who does each item (autonomous cheap model / supervised / senior / human decision), in what order, with what verification. This is the layer that lets a cheaper model match a senior one — it inherits the routing instead of guessing it. |
-| [`ratchet-loop`](skills/ratchet-loop/SKILL.md) ⭐ | The executor. Picks the next eligible item, implements exactly its spec, runs acceptance until green (bounded), commits atomically, updates the ledger, repeats. Stops cleanly; resumes for free. Ships with [`executor-rules.md`](skills/ratchet-loop/executor-rules.md) — 12 binding rules that make the loop safe for smaller models. |
+| [`ratchet-loop`](skills/ratchet-loop/SKILL.md) ⭐ | The executor. Picks the next eligible item, implements exactly its spec, runs acceptance until green (bounded), commits atomically, updates the ledger, repeats. Stops cleanly; resumes for free. Ships with [`executor-rules.md`](skills/ratchet-loop/executor-rules.md) — 13 binding rules that make the loop safe for smaller models. |
 | [`ratchet-ship`](skills/ratchet-ship/SKILL.md) | Release runbook: full preflight, diff & secret scan, push, watch CI to green, smoke checklist, rollback notes. |
 
 ## Field notes
@@ -186,6 +255,8 @@ Deny-lists still belong in the workflow — as a guardrail against an honest mis
 
 **What stops an infinite loop?** Per-item attempt caps (default 3), the two-consecutive-blocks rule, an optional `--max-items` budget, and the fact that every state transition is written to the file — a stuck loop is visible and resumable, not mysterious.
 
+**Can several agents work one backlog at once?** Yes, on [format v2](#parallel-lanes-format-v2): each agent takes a lane, writes only that lane's state file, and works a disjoint slice of the tree in its own worktree. Everything shared is serialized through the default lane's barrier. Start on v1 — migrate when the backlog is big enough that coordination pays for itself.
+
 **Does it work unattended?** Yes — that's the point of file-based state. Pair `/ratchet-loop` with Claude Code's `/loop`, a cron job, or a CI workflow for standing automation. A ready-made GitHub Action for the meta-loop (scheduled `/ratchet-audit` → PR with a fresh backlog, never a direct push) ships at [`.github/workflows/ratchet-audit.yml`](.github/workflows/ratchet-audit.yml) — copy it into any repo. Read [the two-job rule](#unattended-automation-the-two-job-rule) before you wire up any agent that runs without you. Start attended until you trust your acceptance criteria.
 
 **My project isn't Node/TypeScript.** Ratchet is stack-agnostic. The audit detects your toolchain and writes acceptance commands in it; the loop just runs whatever the criteria say.
@@ -200,8 +271,9 @@ Deny-lists still belong in the workflow — as a guardrail against an honest mis
 
 - [x] Claude Code plugin packaging (one-command install)
 - [x] GitHub Action: scheduled meta-loop (`audit → open PR with backlog`) — [`.github/workflows/ratchet-audit.yml`](.github/workflows/ratchet-audit.yml)
-- [ ] Backlog format v2: parallel lanes for multi-agent execution
-- [ ] Ports: Cursor rules, OpenAI Codex prompt pack
+- [x] Backlog format v2: parallel lanes for multi-agent execution — [spec](docs/backlog-format.md#5-format-v2--parallel-lanes-ratchetv2), [walkthrough](examples/v2/)
+- [ ] Port: Cursor rules
+- [ ] Port: OpenAI Codex prompt pack
 
 ## License
 

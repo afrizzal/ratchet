@@ -27,8 +27,8 @@ loop's preflight resets it to `todo` automatically; it is routed below as if `to
 
 ## Waves
 
-| # | ID | Lane | Who | Verify | Why | Invocation |
-|---|----|------|-----|--------|-----|------------|
+| # | ID | Route | Who | Verify | Why | Invocation |
+|---|----|-------|-----|--------|-----|------------|
 | 1 | UX-05 | DECIDE-FIRST | human answers **now**; executes later | — | `[USER-DECISION]`: wording not decided; criterion is provisional — surfacing it first keeps it off the critical path | answer the question above, unpark, then `/ratchet-recommend` |
 | 2 | PERF-03 | AUTONOMOUS | cheap model (e.g. Sonnet — `/model sonnet`), unattended | inline | not sensitive; every AC is a runnable backticked command | `/ratchet-loop --only PERF-03 --verify inline` |
 | 3 | SEC-02 | SUPERVISED | cheap model allowed, clean-room verified | fresh | Evidence mentions auth/ownership → *sensitive*; Spec names 1 file, no migration → *small* | `/ratchet-loop --only SEC-02 --verify fresh` |

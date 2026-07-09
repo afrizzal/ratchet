@@ -1,7 +1,7 @@
 {
   "name": "ratchet",
   "description": "Verified, resumable engineering loops for Claude Code — audit a codebase into an acceptance-gated backlog, route each item to the right model, execute one verified commit at a time.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": { "name": "afrizzal" },
   "homepage": "https://github.com/afrizzal/ratchet",
   "repository": "https://github.com/afrizzal/ratchet",

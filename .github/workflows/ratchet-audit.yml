@@ -11,10 +11,11 @@
 #   audit  — runs Claude.  permissions: contents: READ.  Checkout runs with
 #            persist-credentials: false, so no push-capable git credential ever
 #            exists in the shell Claude can reach. The only thing that leaves
-#            this job is an artifact containing at most two files.
+#            this job is an artifact containing the audit artifacts (AUDIT.md,
+#            BACKLOG.md, and — on ratchet:v2 repos — ratchet/lanes/*.md).
 #   pr     — runs no model. permissions: contents: write. Fresh checkout, copies
-#            those two files in, commits them by pathspec, pushes a new branch,
-#            opens the PR.
+#            those artifact files in, commits them by pathspec, pushes a new
+#            branch, opens the PR.
 #
 #   So "Claude cannot commit, push, or open a PR" is enforced by the job token
 #   and the artifact boundary — not by the --disallowedTools list, which is
@@ -136,30 +137,33 @@ jobs:
             --model ${{ inputs.model || 'claude-opus-4-8' }}
             --allowedTools "Read,Glob,Grep,Task,TodoWrite,Bash,Write,Edit"
             --disallowedTools "Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git switch:*),Bash(git checkout:*),Bash(git reset:*),Bash(git restore:*),Bash(gh:*),WebFetch,WebSearch"
-            --append-system-prompt "You are running unattended in CI as a scheduled meta-loop. The audit is read-only: your only writes are ratchet/AUDIT.md and ratchet/BACKLOG.md. Never clobber a BACKLOG.md that has Ledger progress — append new items under new IDs. Do not stage, commit, push, or open PRs; a separate job commits the two artifacts and opens the PR deterministically after you finish."
+            --append-system-prompt "You are running unattended in CI as a scheduled meta-loop. The audit is read-only: your only writes are ratchet/AUDIT.md, ratchet/BACKLOG.md, and — only if the existing backlog carries the ratchet:v2 marker — the new items' ledger rows in ratchet/lanes/*.md. Never clobber a BACKLOG.md that has Ledger progress — append new items under new IDs; on a v2 backlog give each new item a Lane: from the declared Lanes table and never emit Ledger/Journal sections into the backlog itself. Do not stage, commit, push, or open PRs; a separate job commits the artifacts and opens the PR deterministically after you finish."
 
       - name: Collect artifacts
         id: collect
         if: steps.guard.outputs.skip != 'true'
         run: |
-          # The audit is contractually read-only outside its two artifacts.
+          # The audit is contractually read-only outside its artifacts
+          # (AUDIT.md, BACKLOG.md, and lane state files on ratchet:v2 repos).
           # Surface any deviation loudly — it cannot leave this job either way.
-          extra=$(git status --porcelain -uall -- . ':!ratchet/AUDIT.md' ':!ratchet/BACKLOG.md')
+          extra=$(git status --porcelain -uall -- . ':!ratchet/AUDIT.md' ':!ratchet/BACKLOG.md' ':!ratchet/lanes')
           if [ -n "$extra" ]; then
-            echo "::warning::Audit touched files outside its two artifacts (discarded, never PR'd):"
+            echo "::warning::Audit touched files outside its artifacts (discarded, never PR'd):"
             echo "$extra"
           fi
 
-          changed=$(git status --porcelain -uall -- ratchet/AUDIT.md ratchet/BACKLOG.md)
+          changed=$(git status --porcelain -uall -- ratchet/AUDIT.md ratchet/BACKLOG.md 'ratchet/lanes/*.md')
           if [ -z "$changed" ]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Audit produced no changes to ratchet/AUDIT.md or ratchet/BACKLOG.md — nothing to PR."
+            echo "::notice::Audit produced no changes to its artifacts (ratchet/AUDIT.md, ratchet/BACKLOG.md, ratchet/lanes/*.md) — nothing to PR."
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # Only these two paths can cross the job boundary. This is the mechanical
+      # Only these paths can cross the job boundary. This is the mechanical
       # version of "commit only the artifacts" — nothing else is even uploaded.
+      # (ratchet/lanes/*.md exists only on ratchet:v2 repos; on v1 repos the
+      # glob simply matches nothing.)
       - name: Upload audit artifacts
         if: steps.guard.outputs.skip != 'true' && steps.collect.outputs.changed == 'true'
         uses: actions/upload-artifact@v4
@@ -168,6 +172,7 @@ jobs:
           path: |
             ratchet/AUDIT.md
             ratchet/BACKLOG.md
+            ratchet/lanes/*.md
           if-no-files-found: error
           retention-days: 7
 
@@ -205,18 +210,25 @@ jobs:
           set -euo pipefail
 
           # upload-artifact roots the archive at the least common ancestor
-          # (ratchet/), so the files land at the top of $ARTIFACTS.
+          # (ratchet/), so the files land at the top of $ARTIFACTS, with
+          # lanes/*.md (v2 repos only) in a lanes/ subdirectory.
           mkdir -p ratchet
+          paths=(ratchet/AUDIT.md ratchet/BACKLOG.md)
           for f in AUDIT.md BACKLOG.md; do
             if [ -f "$ARTIFACTS/$f" ]; then
               cp -- "$ARTIFACTS/$f" "ratchet/$f"
             fi
           done
+          if [ -d "$ARTIFACTS/lanes" ]; then
+            mkdir -p ratchet/lanes
+            cp -- "$ARTIFACTS"/lanes/*.md ratchet/lanes/
+            paths+=(ratchet/lanes)
+          fi
 
-          git add -- ratchet/AUDIT.md ratchet/BACKLOG.md
+          git add -- "${paths[@]}"
           # Scoped to the pathspec: an unscoped check would read any other index
           # entry as "there is something to PR".
-          if git diff --cached --quiet -- ratchet/AUDIT.md ratchet/BACKLOG.md; then
+          if git diff --cached --quiet -- "${paths[@]}"; then
             echo "::notice::Artifacts match the base branch — nothing to PR."
             exit 0
           fi
@@ -229,9 +241,9 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
-          # Commit by pathspec: the commit is exactly these two files, whatever
-          # else may sit in the index.
-          git commit -m "ratchet: scheduled audit $stamp" -- ratchet/AUDIT.md ratchet/BACKLOG.md
+          # Commit by pathspec: the commit is exactly these artifact paths,
+          # whatever else may sit in the index.
+          git commit -m "ratchet: scheduled audit $stamp" -- "${paths[@]}"
 
           # persist-credentials: false above means we authenticate explicitly here.
           git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
@@ -243,7 +255,7 @@ jobs:
 
           Opened automatically by the \`ratchet-audit\` meta-loop
           ([run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})).
-          It contains **only** the two audit artifacts:
+          It contains **only** the audit artifacts:
 
           \`\`\`
           $diffstat
@@ -253,7 +265,9 @@ jobs:
           - Treat \`ratchet/BACKLOG.md\` like code: read the diff, delete items, tighten
             specs, add or adjust \`[RISKY]\` / \`[OPS]\` / \`[USER-DECISION]\` gate tags.
           - The audit is instructed to append under new IDs rather than clobber Ledger
-            history — the diff is where you confirm it did.
+            history — the diff is where you confirm it did. On a \`ratchet:v2\` backlog
+            the new items' \`todo\` rows land in \`ratchet/lanes/<lane>.md\`; confirm each
+            new item's \`Lane:\` matches the lane file its row went into.
 
           ### After merging
           Run \`/ratchet-recommend\` for a routed plan (\`ratchet/NEXT.md\`), then paste
@@ -262,7 +276,8 @@ jobs:
           ### Safety
           - The audit ran in a job with a read-only token and no git credential — it
             could not have committed, pushed, or opened this PR.
-          - Only \`ratchet/AUDIT.md\` and \`ratchet/BACKLOG.md\` crossed the job boundary.
+          - Only \`ratchet/AUDIT.md\`, \`ratchet/BACKLOG.md\`, and \`ratchet/lanes/*.md\`
+            crossed the job boundary.
           - Nothing was pushed to \`${BASE_BRANCH}\` — the ratchet only turns through this review.
           EOF
 

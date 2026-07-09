@@ -1,19 +1,31 @@
 # BACKLOG — acme-todo API hardening
-<!-- ratchet:v1 -->
+<!-- ratchet:v2 -->
 
-> Example backlog for a fictional Express + TypeScript todo API. Shows every feature of the
-> format: global checks, priorities, dependencies, human-gate tags, a ledger mid-run, and a
-> journal spanning two sessions (i.e., a resume).
+> Example **v2** backlog for the same fictional Express + TypeScript todo API as
+> `examples/BACKLOG.example.md` (v1), migrated to parallel lanes. State lives in
+> `lanes/*.md`, one file per lane, one writer each — so an `api` executor and a `ui`
+> executor can run at the same time in separate worktrees without ever writing the
+> same file. This file is **human-owned**: executors read it and never write it.
 >
-> The same backlog migrated to **v2 parallel lanes** lives in [`examples/v2/`](v2/).
+> Start with the [walkthrough](README.md) — it shows two agents working this backlog at once.
+> Companion files: `NEXT.example.md`, `lanes/core.example.md`, `lanes/api.example.md`,
+> `lanes/ui.example.md`.
 
 ## Global checks
 - `npx tsc --noEmit --incremental false`
 - `npm test`
 
+## Lanes
+| Lane | Scope | Notes |
+|---|---|---|
+| core | (rest) | default lane — dependencies, config, integration fixes; barrier runs only |
+| api | `src/routes/**`, `src/middleware/**`, `test/**` | server hardening |
+| ui | `web/src/**` | frontend debt |
+
 ## Items
 
 ### SEC-01 — Scope todo lookups by owner [P0]
+- Lane: api
 - Tags: —
 - Depends: —
 - Evidence: src/routes/todos.ts:41 — GET/DELETE `/todos/:id` fetch by id only; any
@@ -28,6 +40,7 @@
   - [ ] existing todo CRUD tests still pass unchanged
 
 ### SEC-02 — Add regression test utilities for multi-user auth [P1]
+- Lane: api
 - Tags: —
 - Depends: SEC-01
 - Evidence: test/helpers.ts:1 — helpers can only mint one test user; cross-user auth/ownership
@@ -39,6 +52,7 @@
   - [ ] `makeTwoUsers()` used by at least the SEC-01 regression test
 
 ### PERF-03 — Cap unbounded list endpoint [P2]
+- Lane: api
 - Tags: —
 - Depends: —
 - Evidence: src/routes/todos.ts:12 — `GET /todos` returns every row; no limit parameter
@@ -49,7 +63,30 @@
   - [ ] `curl -s localhost:3000/todos | jq length` returns ≤ 50 against the 60-row seed DB
   - [ ] `curl -s 'localhost:3000/todos?limit=9999' | jq length` returns ≤ 200 with HTTP 200 (clamped, not an error)
 
+### UI-06 — Virtualize the todo list [P2]
+- Lane: core
+- Tags: —
+- Depends: —
+- Evidence: web/src/TodoList.tsx:18 — renders every row; 2k-todo accounts drop frames on scroll
+- Spec: render rows through `@tanstack/react-virtual` (new dependency — this is why the item
+  is in the `core` lane: it edits package.json + the lockfile, which no named lane owns);
+  keep the row markup and props identical
+- Acceptance:
+  - [ ] `npx tsc --noEmit --incremental false` exits 0
+  - [ ] `npm test` exits 0 (the TodoList snapshot test still passes)
+
+### UI-07 — Empty state for a filtered-to-nothing list [P3]
+- Lane: ui
+- Tags: —
+- Depends: —
+- Evidence: web/src/TodoList.tsx:44 — an active filter with zero matches renders a blank pane
+- Spec: when `todos.length === 0 && hasActiveFilter`, render the existing `<EmptyState>`
+  component with copy "No todos match this filter"; do not touch the unfiltered empty case
+- Acceptance:
+  - [ ] `npm test` exits 0 (add a render test asserting the copy appears)
+
 ### OPS-04 — Rotate the leaked staging DB password [P0]
+- Lane: core
 - Tags: [OPS]
 - Depends: —
 - Evidence: scripts/seed-staging.sh:8 — plaintext password committed in git history
@@ -60,34 +97,10 @@
   - [ ] `grep -r "hunter2" scripts/` returns nothing
 
 ### UX-05 — Friendlier validation errors [P3]
+- Lane: api
 - Tags: [USER-DECISION]
 - Depends: —
 - Evidence: src/middleware/validate.ts:22 — zod errors returned raw; users see internal paths
 - Spec: needs a copy/product decision on error message wording before implementation
 - Acceptance:
   - [ ] (provisional — gated on the wording decision; replace with a real criterion at unpark)
-
-## Ledger
-| ID | Status | Attempts | Commit | Note |
-|---|---|---|---|---|
-| SEC-01 | done | 2 | 3f9a2e1 | attempt 1 broke the seed fixture the new regression test relies on; see journal |
-| SEC-02 | in-progress | 1 | — | resumed by session 2 |
-| PERF-03 | todo | 0 | — | — |
-| OPS-04 | needs-human | 0 | — | [OPS] requires staging server access |
-| UX-05 | needs-human | 0 | — | [USER-DECISION] wording not decided |
-
-## Journal
-- 2026-07-06 run started (session 1). Baseline green: tsc 0, tests 34/34.
-- 2026-07-06 SEC-01 attempt 1: scoping fix + the regression test the Spec names are in, but
-  `seed.ts` assumed global visibility → 2 tests red. The fixture serves the new test, so
-  fixing it stays inside the Spec (the diff is still one describable change). Re-ran.
-- 2026-07-06 SEC-01 attempt 2: green (35/35 incl. new regression test). Committed 3f9a2e1
-  (sha backfilled over `pending` in the next ledger write).
-- 2026-07-06 PERF-03 note: full cursor pagination is deliberately out of scope — product
-  decision pending; candidate future item if the team wants it.
-- 2026-07-06 OPS-04: human-gated [OPS], parked as needs-human. UX-05: [USER-DECISION], parked.
-- 2026-07-06 session 1 ended (context budget); ledger synced (`ratchet: sync ledger`).
-  Resume: re-run /ratchet-loop on this file.
-- 2026-07-07 run resumed (session 2). Ledger read: SEC-02 eligible (SEC-01 done). Marked
-  in-progress. Suggestion for humans: consider a lint rule banning unscoped `findUnique` on
-  owned models — recurring pattern behind SEC-01.

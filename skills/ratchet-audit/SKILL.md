@@ -41,9 +41,11 @@ For every candidate finding: open the cited file yourself and confirm the eviden
 
 Create the `ratchet/` directory (respect an existing one: **append/update, never clobber** a BACKLOG.md that has Ledger progress — new items go under new IDs).
 
+**If the existing backlog is v2** (marker `<!-- ratchet:v2 -->`; items carry `Lane:`, state lives in `lanes/<lane>.md`): append items **with** a `Lane:` field — pick the declared lane whose scope contains the item's Evidence/Spec paths; dependency-adding or shared-path items go to the first-declared default lane; if no assignment is defensible, the finding goes to AUDIT.md's "needs definition" list instead. Write each new item's `todo` ledger row into its lane's file, **never** emit `## Ledger`/`## Journal` sections into a v2 backlog, and touch nothing while a lane run is open (a lane journal whose last run marker is `run started` — respect the format's human write windows; if every lane is open, put the items in AUDIT.md and say so). Fresh emission stays v1 below — v2 is opt-in via `/ratchet-backlog migrate` or an explicit user ask.
+
 **`ratchet/AUDIT.md`** — the context: what the project is, architecture, hidden assumptions, what's strong and must be preserved, what's fragile, what remains unclear (say exactly what you couldn't verify — never bluff).
 
-**`ratchet/BACKLOG.md`** — strictly `ratchet:v1`. The skeleton you must emit (full spec: `docs/backlog-format.md` in the ratchet repo, github.com/afrizzal/ratchet):
+**`ratchet/BACKLOG.md`** — a **fresh** backlog is always `ratchet:v1` (v2's parallel lanes are opt-in, via `/ratchet-backlog migrate` or an explicit user ask; appending to an existing v2 file follows the rule above). The skeleton you must emit (full spec: `docs/backlog-format.md` in the ratchet repo, github.com/afrizzal/ratchet):
 
 ```markdown
 # BACKLOG — <project or scope name>

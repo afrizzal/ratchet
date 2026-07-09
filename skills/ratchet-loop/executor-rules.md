@@ -7,6 +7,11 @@ test on a production multi-tenant ERP (Next.js/tRPC/Prisma, 40 routers, 76 model
 
 Each rule is a *do-this-exactly*, not a principle. When a rule and your instinct disagree, follow the rule.
 
+One defined term, used by rules 9, 11, 12, and 13. **The state file** is where your ledger and
+journal writes go: in a v1 backlog it is the backlog file itself (default `ratchet/BACKLOG.md`);
+in a v2 backlog (`<!-- ratchet:v2 -->`) it is your lane's file, `lanes/<lane>.md` — and in v2 the
+backlog file is read-only to you, always.
+
 ---
 
 ## 1. Identify risky work by a fixed trigger list, not by feel
@@ -74,7 +79,7 @@ Revert the item when: attempts hit 3, OR you discover mid-work the Spec is wrong
 acceptance criteria can't be run here. Revert only the **source files this item touched** — enumerate
 them by name and `git restore` them; delete only files this item created, by name. **Never**
 `git checkout -- .` or `git clean -fd` — those wipe your ledger edits and can delete the untracked
-`ratchet/` state. After reverting, `git status` should show only the backlog file changed.
+`ratchet/` state. After reverting, `git status` should show only the state file changed.
 
 ## 10. Update the Journal so the next session inherits, not re-discovers
 One line per meaningful event: attempt result, block reason, a discovery worth keeping ("the ledger
@@ -84,12 +89,13 @@ Journal suggestion — you never add items yourself. Head-state that isn't in th
 your context resets.
 
 ## 11. Produce reviewable commits: one item, two-file diff shape
-A finished item is exactly one commit containing (a) the item's source change and (b) the backlog's
-ledger row flipped to `done` with `Commit: pending` (a commit cannot contain its own sha). The **only**
-other hunk permitted in the diff is the one-line sha backfill of the *previous* item's row
-(`pending` → short sha) — nothing else. Stage the specific paths (`git add <src...> <backlog-path>`,
-where `<backlog-path>` is the backlog file resolved at preflight — default `ratchet/BACKLOG.md`),
-confirm the staged diff is only those files, then commit with the repo's message convention
+A finished item is exactly one commit containing (a) the item's source change and (b) the state
+file's ledger row flipped to `done` with `Commit: pending` (a commit cannot contain its own sha).
+The **only** other hunk permitted in the diff is the one-line sha backfill of the *previous* item's
+row in the *same* state file (`pending` → short sha) — nothing else. Stage the specific paths
+(`git add <src...> <state-file-path>`, where `<state-file-path>` is the state file resolved at
+preflight — v1 default `ratchet/BACKLOG.md`; v2: your lane file `lanes/<lane>.md`), confirm the
+staged diff is only those files, then commit with the repo's message convention
 (`ratchet(<ID>): <title>` if none detected). After committing, write the new short sha over your own
 row's `pending`; that edit rides in the next commit. Never batch several items into one commit —
 per-item revertability is the whole point.
@@ -98,11 +104,42 @@ per-item revertability is the whole point.
 Stop and hand back to a human when: two items block in a row (something systemic is wrong), or
 context runs low (write state, commit, report the resume command). Everything item-shaped — a Spec
 that contradicts the code, a rule-1 or rule-4 trip, stale evidence — is *parked* (`needs-human`)
-and the loop continues. Parking is per-item; stopping is for run-level problems. Before stopping — for any reason — commit outstanding ledger edits as
-`ratchet: sync ledger` so no `pending` sha and no dirty tree survive the run. Stopping cleanly with
-the state written is a *success*. Improvising past an ambiguity — guessing what a stale item meant,
-forcing a red check green, expanding scope "because the real problem is bigger" — is the failure mode
-Ratchet exists to prevent. When unsure, park it.
+and the loop continues. Parking is per-item; stopping is for run-level problems. Before stopping — for any reason — commit outstanding ledger edits in the state file as
+`ratchet: sync ledger` (in a v2 run this commit also carries your lane's `run ended` journal
+marker) so no `pending` sha, no open run marker, and no dirty tree survive the run. Stopping
+cleanly with the state written is a *success*. Improvising past an ambiguity — guessing what a
+stale item meant, forcing a red check green, expanding scope "because the real problem is bigger"
+— is the failure mode Ratchet exists to prevent. When unsure, park it.
+
+## 13. In a v2 backlog, read everything, write exactly one lane
+A v2 run resolves its state file to `lanes/<lane>.md` — the lane it was invoked with, or (no
+`--lane`, sequential mode) the lane it is currently working. Binding discipline:
+- **Read** BACKLOG.md and ALL lane files: other lanes' ledgers to evaluate `Depends:` (a
+  cross-lane dependency counts only as a `done` row visible in your worktree), every lane's
+  journal at preflight for inheritance.
+- **Write** only your own lane file — never another lane's file, never BACKLOG.md. Run-level
+  events (baseline results, recovery notes) go in your own lane's journal. A **dirty tracked**
+  BACKLOG.md is never yours to commit: you don't write it, so it is a human's out-of-window edit
+  or merge debris — STOP and report.
+- Another lane's file that is dirty, or holds an `in-progress` row or an open `run started`
+  marker, may be a LIVE parallel run: never recover it, never commit it, never reset its rows.
+  If it blocks you, STOP and report.
+- **Open your lane once.** Decide liveness before your first write. Lane closed → append
+  `run started`. Lane already open on *your* branch → crash debris: journal `found open run …
+  recovering`, recover, and continue under the existing marker — **never append a second
+  `run started`**. Open on another branch → STOP. A run that refuses to start before it has
+  written anything leaves no marker at all; once opened, **every** exit closes the lane with
+  `run ended` in the final `ratchet: sync ledger` (rule 12), including a red-baseline stop.
+- **Before committing an item, list the diff's paths.** In a *named*-lane run, every source path
+  must lie inside your own lane's scope. A path in another lane's scope, or in **no** lane's scope
+  (`package.json`, lockfiles, shared config, generated files — those belong to the default lane),
+  → revert the item (rule 9) and park it `needs-human` ("diff escapes lane scope — refile in the
+  default lane"). Two lanes each adding a dependency in one wave is the lockfile conflict this
+  check exists to prevent. A *default*-lane run is exempt — its scope is `(rest)` — but it is a
+  barrier: it may only start with every other lane closed (`run ended` last) and merged.
+- In sequential mode, commit the outgoing lane's outstanding ledger edits
+  (`ratchet: sync ledger (<lane>)`) before touching the next lane's file — at most one lane
+  file dirty at any moment.
 
 ---
 
