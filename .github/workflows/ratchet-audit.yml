@@ -219,9 +219,16 @@ jobs:
               cp -- "$ARTIFACTS/$f" "ratchet/$f"
             fi
           done
-          if [ -d "$ARTIFACTS/lanes" ]; then
+
+          # v2 repos only. Gate on the FILES, not on the directory: `set -e` plus an
+          # unmatched glob would abort the job, and `[ -d lanes ]` does not imply
+          # `lanes/*.md` matches. nullglob makes the empty case an empty array.
+          shopt -s nullglob
+          lane_files=("$ARTIFACTS"/lanes/*.md)
+          shopt -u nullglob
+          if [ ${#lane_files[@]} -gt 0 ]; then
             mkdir -p ratchet/lanes
-            cp -- "$ARTIFACTS"/lanes/*.md ratchet/lanes/
+            cp -- "${lane_files[@]}" ratchet/lanes/
             paths+=(ratchet/lanes)
           fi
 
