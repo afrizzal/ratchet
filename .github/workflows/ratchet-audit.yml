@@ -1,0 +1,273 @@
+# Ratchet meta-loop: scheduled audit → PR with a fresh backlog.
+#
+# What this does
+#   Runs /ratchet-audit headlessly (claude-code-action). If the audit changed
+#   ratchet/AUDIT.md or ratchet/BACKLOG.md, a second job opens a PR from a
+#   ratchet/audit-* branch. The default branch is never pushed to — the ratchet
+#   only turns through PR review.
+#
+# The safety model is structural, not advisory. Two jobs, split on purpose:
+#
+#   audit  — runs Claude.  permissions: contents: READ.  Checkout runs with
+#            persist-credentials: false, so no push-capable git credential ever
+#            exists in the shell Claude can reach. The only thing that leaves
+#            this job is an artifact containing at most two files.
+#   pr     — runs no model. permissions: contents: write. Fresh checkout, copies
+#            those two files in, commits them by pathspec, pushes a new branch,
+#            opens the PR.
+#
+#   So "Claude cannot commit, push, or open a PR" is enforced by the job token
+#   and the artifact boundary — not by the --disallowedTools list, which is
+#   prefix-matched and is defense-in-depth only, never a security boundary.
+#
+# Setup
+#   1. Install the Claude GitHub App on this repo: https://github.com/apps/claude
+#      (claude-code-action exchanges the OIDC token for an app token — hence
+#      `id-token: write`. Alternatively pass a `github_token:` input instead.)
+#   2. Add the ANTHROPIC_API_KEY repository secret.
+#   3. Settings → Actions → General → enable "Allow GitHub Actions to create and
+#      approve pull requests" (required for `gh pr create` with GITHUB_TOKEN).
+#   4. If your project's acceptance commands need a toolchain (npm ci, pip install…),
+#      add those setup steps before "Run the ratchet audit" so the audit's
+#      baseline reality check can run the Global checks cold.
+#
+# Note: PRs created with GITHUB_TOKEN do not trigger your `on: pull_request`
+# workflows. If you need CI to run on the audit PR, set GH_TOKEN in the `pr` job
+# to a PAT or GitHub App token instead.
+
+name: ratchet-audit
+
+on:
+  schedule:
+    - cron: "17 3 * * 1" # weekly, Monday 03:17 UTC (off the :00 rush)
+  workflow_dispatch:
+    inputs:
+      focus:
+        description: "Audit focus (security, performance, tests, data, frontend, or free text). Empty = full sweep."
+        required: false
+        default: ""
+      depth:
+        description: "Audit depth"
+        type: choice
+        options: [quick, standard, deep]
+        default: standard
+      model:
+        description: "Model for the audit — the expensive model audits; a cheap one executes the backlog later"
+        type: choice
+        options: [claude-opus-4-8, claude-fable-5, claude-sonnet-5]
+        default: claude-opus-4-8
+
+# Never let two audits race each other onto branches/PRs.
+concurrency:
+  group: ratchet-audit
+  cancel-in-progress: false
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1 — run the audit. Read-only token. No git credential. Emits an artifact.
+  # ---------------------------------------------------------------------------
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read # cannot push, by construction
+      pull-requests: read # only to check for an already-open audit PR
+      id-token: write # claude-code-action's GitHub App token exchange
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      skip: ${{ steps.guard.outputs.skip }}
+      changed: ${{ steps.collect.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          # Load-bearing: without this, checkout leaves a contents-scoped push
+          # credential on disk that any command in this job could use.
+          persist-credentials: false
+
+      # Don't stack unreviewed audits: if a ratchet/audit-* PR is still open,
+      # a human hasn't turned the ratchet yet — skip this run.
+      # Paginated: `gh pr list` silently caps at 30, and a stale audit PR is
+      # exactly the one that falls off that page.
+      - name: Skip if an audit PR is already open
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Fetch first, count second: a `gh api | grep -c` pipeline would let a
+          # transient API failure read as "0 open audit PRs" and fail open.
+          refs=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls?state=open&per_page=100" --jq '.[].head.ref')
+          count=$(printf '%s\n' "$refs" | grep -c '^ratchet/audit-') || count=0
+          if [ "$count" -gt 0 ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::An open ratchet/audit-* PR already exists — skipping so audits don't pile up unreviewed."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Install the ratchet skills for the headless session. Inside the ratchet
+      # repo itself this uses the checkout (dogfooding the current branch);
+      # in any other repo it clones the released skills.
+      - name: Install ratchet skills
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          if [ -f skills/ratchet-audit/SKILL.md ]; then
+            src=skills
+          else
+            git clone --depth 1 https://github.com/afrizzal/ratchet /tmp/ratchet
+            src=/tmp/ratchet/skills
+          fi
+          mkdir -p ~/.claude/skills
+          cp -r "$src"/. ~/.claude/skills/
+
+      - name: Run the ratchet audit
+        if: steps.guard.outputs.skip != 'true'
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: "/ratchet-audit ${{ inputs.focus }} --depth ${{ inputs.depth || 'standard' }}"
+          # Audit needs: read/search tools, subagents (Task), Bash for the
+          # baseline reality check, Write/Edit for the two artifacts.
+          # The deny list below is a guardrail against an *honest* mistake, not
+          # a boundary — the read-only job token is the boundary.
+          claude_args: |
+            --model ${{ inputs.model || 'claude-opus-4-8' }}
+            --allowedTools "Read,Glob,Grep,Task,TodoWrite,Bash,Write,Edit"
+            --disallowedTools "Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git switch:*),Bash(git checkout:*),Bash(git reset:*),Bash(git restore:*),Bash(gh:*),WebFetch,WebSearch"
+            --append-system-prompt "You are running unattended in CI as a scheduled meta-loop. The audit is read-only: your only writes are ratchet/AUDIT.md and ratchet/BACKLOG.md. Never clobber a BACKLOG.md that has Ledger progress — append new items under new IDs. Do not stage, commit, push, or open PRs; a separate job commits the two artifacts and opens the PR deterministically after you finish."
+
+      - name: Collect artifacts
+        id: collect
+        if: steps.guard.outputs.skip != 'true'
+        run: |
+          # The audit is contractually read-only outside its two artifacts.
+          # Surface any deviation loudly — it cannot leave this job either way.
+          extra=$(git status --porcelain -uall -- . ':!ratchet/AUDIT.md' ':!ratchet/BACKLOG.md')
+          if [ -n "$extra" ]; then
+            echo "::warning::Audit touched files outside its two artifacts (discarded, never PR'd):"
+            echo "$extra"
+          fi
+
+          changed=$(git status --porcelain -uall -- ratchet/AUDIT.md ratchet/BACKLOG.md)
+          if [ -z "$changed" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Audit produced no changes to ratchet/AUDIT.md or ratchet/BACKLOG.md — nothing to PR."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Only these two paths can cross the job boundary. This is the mechanical
+      # version of "commit only the artifacts" — nothing else is even uploaded.
+      - name: Upload audit artifacts
+        if: steps.guard.outputs.skip != 'true' && steps.collect.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ratchet-audit-artifacts
+          path: |
+            ratchet/AUDIT.md
+            ratchet/BACKLOG.md
+          if-no-files-found: error
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Job 2 — open the PR. No model runs here. Write token is scoped to this job.
+  # ---------------------------------------------------------------------------
+  pr:
+    needs: audit
+    if: needs.audit.outputs.skip != 'true' && needs.audit.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the ratchet/audit-* branch
+      pull-requests: write # open the PR
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download audit artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ratchet-audit-artifacts
+          path: ${{ runner.temp }}/artifacts
+
+      - name: Commit artifacts and open PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: ${{ github.ref_name }}
+          ARTIFACTS: ${{ runner.temp }}/artifacts
+        run: |
+          set -euo pipefail
+
+          # upload-artifact roots the archive at the least common ancestor
+          # (ratchet/), so the files land at the top of $ARTIFACTS.
+          mkdir -p ratchet
+          for f in AUDIT.md BACKLOG.md; do
+            if [ -f "$ARTIFACTS/$f" ]; then
+              cp -- "$ARTIFACTS/$f" "ratchet/$f"
+            fi
+          done
+
+          git add -- ratchet/AUDIT.md ratchet/BACKLOG.md
+          # Scoped to the pathspec: an unscoped check would read any other index
+          # entry as "there is something to PR".
+          if git diff --cached --quiet -- ratchet/AUDIT.md ratchet/BACKLOG.md; then
+            echo "::notice::Artifacts match the base branch — nothing to PR."
+            exit 0
+          fi
+
+          # GITHUB_RUN_NUMBER alone repeats across re-run attempts, which would
+          # make a retry after a failed `gh pr create` a non-fast-forward push.
+          stamp=$(date -u +%Y-%m-%d)
+          branch="ratchet/audit-$(date -u +%Y%m%d)-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          # Commit by pathspec: the commit is exactly these two files, whatever
+          # else may sit in the index.
+          git commit -m "ratchet: scheduled audit $stamp" -- ratchet/AUDIT.md ratchet/BACKLOG.md
+
+          # persist-credentials: false above means we authenticate explicitly here.
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$branch"
+
+          diffstat=$(git show --stat --format="" HEAD)
+
+          cat > "${RUNNER_TEMP}/pr-body.md" <<EOF
+          ## Scheduled ratchet audit — $stamp
+
+          Opened automatically by the \`ratchet-audit\` meta-loop
+          ([run](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})).
+          It contains **only** the two audit artifacts:
+
+          \`\`\`
+          $diffstat
+          \`\`\`
+
+          ### How to review
+          - Treat \`ratchet/BACKLOG.md\` like code: read the diff, delete items, tighten
+            specs, add or adjust \`[RISKY]\` / \`[OPS]\` / \`[USER-DECISION]\` gate tags.
+          - The audit is instructed to append under new IDs rather than clobber Ledger
+            history — the diff is where you confirm it did.
+
+          ### After merging
+          Run \`/ratchet-recommend\` for a routed plan (\`ratchet/NEXT.md\`), then paste
+          its wave commands into \`/ratchet-loop\`. \`/ratchet-ship\` opens the result PR.
+
+          ### Safety
+          - The audit ran in a job with a read-only token and no git credential — it
+            could not have committed, pushed, or opened this PR.
+          - Only \`ratchet/AUDIT.md\` and \`ratchet/BACKLOG.md\` crossed the job boundary.
+          - Nothing was pushed to \`${BASE_BRANCH}\` — the ratchet only turns through this review.
+          EOF
+
+          gh pr create \
+            --base "$BASE_BRANCH" \
+            --head "$branch" \
+            --title "ratchet: scheduled audit $stamp" \
+            --body-file "${RUNNER_TEMP}/pr-body.md"

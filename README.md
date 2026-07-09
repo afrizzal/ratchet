@@ -159,26 +159,47 @@ The lesson that became Ratchet: **the handoff artifact matters more than the mod
 - No force-pushes, no `--no-verify`, no amending history. Ever.
 - Two consecutive blocked items stop the run — that pattern usually means something systemic, and a human should look.
 
+### Unattended automation: the two-job rule
+
+When nobody is at the keyboard — cron, CI, the shipped [`ratchet-audit` Action](.github/workflows/ratchet-audit.yml) — *"the agent was told not to"* is not a control. Two things that look like boundaries aren't:
+
+- **Tool deny-lists are prefix matches, not a sandbox.** `Bash(git push:*)` never sees `git -c protocol.version=2 push origin HEAD:main`.
+- **`actions/checkout` leaves a push credential on disk by default.** Any command in the job — including one the agent writes — can use it.
+
+So don't ask the agent to abstain. Take the credential away, and split the run in two:
+
+| Job | Runs the model? | Token | Can it write? |
+|---|---|---|---|
+| **audit** | yes | `contents: read`, checkout with `persist-credentials: false` | no — there is no push credential in its shell |
+| **pr** | no | `contents: write` | yes, and no model can reach it |
+
+Two more mechanical details do the rest:
+
+- **The artifact is the pathspec.** Only the files the audit is allowed to produce cross the job boundary; nothing else is even uploaded.
+- **Commit by pathspec** — `git commit -- ratchet/AUDIT.md ratchet/BACKLOG.md`. A bare `git commit -m` commits the whole index, so a file the agent staged would ride along inside a PR that claims to hold only artifacts. (`git add` is not on any deny-list worth trusting.)
+
+Deny-lists still belong in the workflow — as a guardrail against an honest mistake, never as the boundary. The rule generalizes: **an unattended agent should hold no credential that can do the thing you are promising it won't do.**
+
 ## FAQ
 
 **Why not just use GitHub issues?** Issues are great for humans coordinating. A backlog file is better for a loop: it travels with the branch, works offline, carries machine-checkable acceptance criteria, diffs in review, and costs zero API calls to read. Use `/ratchet-backlog create from github issues` to bridge.
 
 **What stops an infinite loop?** Per-item attempt caps (default 3), the two-consecutive-blocks rule, an optional `--max-items` budget, and the fact that every state transition is written to the file — a stuck loop is visible and resumable, not mysterious.
 
-**Does it work unattended?** Yes — that's the point of file-based state. Pair `/ratchet-loop` with Claude Code's `/loop`, a cron job, or a CI workflow for standing automation. Start attended until you trust your acceptance criteria.
+**Does it work unattended?** Yes — that's the point of file-based state. Pair `/ratchet-loop` with Claude Code's `/loop`, a cron job, or a CI workflow for standing automation. A ready-made GitHub Action for the meta-loop (scheduled `/ratchet-audit` → PR with a fresh backlog, never a direct push) ships at [`.github/workflows/ratchet-audit.yml`](.github/workflows/ratchet-audit.yml) — copy it into any repo. Read [the two-job rule](#unattended-automation-the-two-job-rule) before you wire up any agent that runs without you. Start attended until you trust your acceptance criteria.
 
 **My project isn't Node/TypeScript.** Ratchet is stack-agnostic. The audit detects your toolchain and writes acceptance commands in it; the loop just runs whatever the criteria say.
 
 ## Prior art & positioning
 
-- **Skill libraries** — [`anthropics/skills`](https://github.com/anthropics/skills), [`obra/superpowers`](https://github.com/obra/superpowers), [`alirezarezvani/claude-skills`](https://github.com/alirezarezvani/claude-skills) (355 skills) — give agents *expertise*: personas, domain knowledge, tool recipes. Ratchet gives agents *a contract*. They compose: load whatever expertise you like; Ratchet governs how the work lands.
+- **Skill libraries** — [`anthropics/skills`](https://github.com/anthropics/skills), [`obra/superpowers`](https://github.com/obra/superpowers) — give agents *expertise*: personas, domain knowledge, tool recipes. Ratchet gives agents *a contract*. They compose: load whatever expertise you like; Ratchet governs how the work lands.
 - **Loop machinery** — Anthropic's research on long-running agents, and `agent-harness` (in the repo above): a manifest → plan → loop-controller state machine in Python + JSON. Ratchet takes the same discipline — bounded retries, escalation, *never trust the agent's own claim of success* (that's where `--verify fresh` comes from) — and bets on the opposite implementation: the smallest possible contract, one markdown file, zero runtime scripts, reviewable in a PR.
 - **Loop catalogs** — Forward-Future's `loop-library` documents *which* loops practitioners run. Ratchet is *how* one loop executes safely.
 
 ## Roadmap
 
 - [x] Claude Code plugin packaging (one-command install)
-- [ ] GitHub Action: scheduled meta-loop (`audit → open PR with backlog`)
+- [x] GitHub Action: scheduled meta-loop (`audit → open PR with backlog`) — [`.github/workflows/ratchet-audit.yml`](.github/workflows/ratchet-audit.yml)
 - [ ] Backlog format v2: parallel lanes for multi-agent execution
 - [ ] Ports: Cursor rules, OpenAI Codex prompt pack
 
